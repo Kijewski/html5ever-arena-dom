@@ -465,11 +465,11 @@ impl<'arena> ArenaSinkParser<'arena> {
 pub enum RenderError {
     /// An error occured while rendering of the template.
     #[error("A rendering error occured: {0}")]
-    Render(askama::Error),
+    Render(#[from] askama::Error),
 
     /// An error occured while serializing the template.
     #[error("A serialization error occured: {0}")]
-    Serialize(io::Error),
+    Serialize(#[from] io::Error),
 }
 
 /// Render an askama [Template] into a writer, e.g. a [`Vec<u8>`].
