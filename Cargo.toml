@@ -1,0 +1,12 @@
+[package]
+name = "askama-plus-html5ever"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+anyhow = "1"
+askama = "0.10"
+html5ever = "0.25"
+tendril = "0.4"
+thiserror = "1"
+typed-arena = ">= 1, < 3"
