@@ -7,23 +7,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
-///! A simple library to parse [askama] templates, and tidy them up using [html5ever].
+//! Stream generated HTML data into [html5ever] to tidy it up while generating the data.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashSet, VecDeque};
+use std::io::Write;
 use std::{fmt, io, ptr};
 
-use askama::Template;
 use html5ever::driver::{parse_document, ParseOpts};
 use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::serialize::{HtmlSerializer, Serialize, SerializeOpts, Serializer, TraversalScope};
 use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::tree_builder::TreeBuilderOpts;
 use html5ever::{Attribute, ExpandedName, Parser, QualName};
-use thiserror::Error;
 
 // Copied and adapted from
 // https://github.com/servo/html5ever/blob/cfea19f74d922ad049614cdb88a7805bc4ea7e06/html5ever/examples/arena.rs
@@ -179,6 +179,8 @@ impl<'arena> ArenaSink<'arena> {
         append(new_node)
     }
 
+    /// Construct a new [ArenaSink] that uses `arena` as its memory space.
+    #[inline]
     pub fn new(arena: Arena<'arena>) -> Self {
         Self {
             arena,
@@ -216,7 +218,7 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
 
     fn get_template_contents(&mut self, target: &Ref<'arena>) -> Ref<'arena> {
         if let NodeData::Element {
-            template_contents: Some(ref contents),
+            template_contents: Some(contents),
             ..
         } = target.data
         {
@@ -302,9 +304,8 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
         _public_id: StrTendril,
         _system_id: StrTendril,
     ) {
-        self.document.append(self.new_node(NodeData::Doctype {
-            name,
-        }))
+        self.document
+            .append(self.new_node(NodeData::Doctype { name }))
     }
 
     fn add_attrs_if_missing(&mut self, target: &Ref<'arena>, attrs: Vec<Attribute>) {
@@ -400,21 +401,23 @@ impl<'arena> Serialize for Ref<'arena> {
                         }
                     }
 
-                    NodeData::Doctype { ref name, .. } => serializer.write_doctype(&name)?,
+                    NodeData::Doctype { ref name, .. } => serializer.write_doctype(name)?,
 
                     NodeData::Text { ref contents } => serializer.write_text(&contents.borrow())?,
 
-                    NodeData::Comment { ref contents } => serializer.write_comment(&contents)?,
+                    NodeData::Comment { ref contents } => serializer.write_comment(contents)?,
 
                     NodeData::ProcessingInstruction {
                         ref target,
                         ref contents,
                     } => serializer.write_processing_instruction(target, contents)?,
 
-                    NodeData::Document => return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "Can't serialize Document node itself",
-                    )),
+                    NodeData::Document => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "Can't serialize Document node itself",
+                        ))
+                    }
                 },
 
                 SerializeOp::Close(name) => {
@@ -429,16 +432,53 @@ impl<'arena> Serialize for Ref<'arena> {
 
 // }
 
-/// A wrapper for [`Parser<ArenaSink<'_>>`](Parser) that implements [Write](fmt::Write)
-/// for use with [askama].
-pub struct ArenaSinkParser<'arena> {
-    inner: Parser<ArenaSink<'arena>>,
-}
+/// A wrapper for [`Parser<ArenaSink<'_>>`](Parser) that implements [fmt::Write](fmt::Write)
+/// and [io::Write](io::Write).
+pub struct ArenaSinkParser<'arena>(Parser<ArenaSink<'arena>>);
 
 impl fmt::Write for ArenaSinkParser<'_> {
+    #[inline]
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.inner.process(s.into());
+        self.0.process(s.into());
         Ok(())
+    }
+}
+
+struct ArenaIoAdaptor<'a, 'arena>(&'a mut ArenaSinkParser<'arena>);
+
+impl fmt::Write for ArenaIoAdaptor<'_, '_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.write_str(s)
+    }
+}
+
+impl<'arena> io::Write for ArenaSinkParser<'arena> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        let s =
+            std::str::from_utf8(buf).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+        self.0.process(s.into());
+        Ok(())
+    }
+
+    #[inline]
+    fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
+        match fmt::write(&mut ArenaIoAdaptor(self), fmt) {
+            Ok(()) => Ok(()),
+            Err(..) => Err(io::Error::new(io::ErrorKind::Other, "formatter error")),
+        }
     }
 }
 
@@ -449,33 +489,22 @@ impl<'arena> ArenaSinkParser<'arena> {
     ///
     /// * `arena` - The allocator to use.
     /// * `opts` - Options to pass to `parse_document()`.
+    #[inline]
     pub fn new(arena: Arena<'arena>, opts: ParseOpts) -> Self {
-        let inner = parse_document(ArenaSink::new(arena), opts);
-        Self { inner }
+        Self(parse_document(ArenaSink::new(arena), opts))
     }
 
     /// Finish rendering and return the document node.
+    #[inline]
     pub fn finish(self) -> Ref<'arena> {
-        self.inner.finish()
+        self.0.finish()
     }
 }
 
-/// Possible errors in [render()].
-#[derive(Debug, Error)]
-pub enum RenderError {
-    /// An error occured while rendering of the template.
-    #[error("A rendering error occured: {0}")]
-    Render(#[from] askama::Error),
-
-    /// An error occured while serializing the template.
-    #[error("A serialization error occured: {0}")]
-    Serialize(#[from] io::Error),
-}
-
-/// Render an askama [Template] into a writer, e.g. a [`Vec<u8>`].
+/// Render a template into a writer, e.g. a [`Vec<u8>`].
 ///
 /// This is an oppinionated default implementation that disables [html5ever]'s script rendering.
-pub fn render(tmpl: &impl Template, dest: impl io::Write) -> Result<(), RenderError> {
+pub fn render(tmpl: &impl fmt::Display, dest: impl io::Write) -> Result<(), io::Error> {
     // render
     let arena = typed_arena::Arena::new();
     let mut parser = ArenaSinkParser::new(
@@ -488,7 +517,7 @@ pub fn render(tmpl: &impl Template, dest: impl io::Write) -> Result<(), RenderEr
             ..ParseOpts::default()
         },
     );
-    tmpl.render_into(&mut parser).map_err(RenderError::Render)?;
+    write!(parser, "{}", tmpl)?;
     let document = parser.finish();
 
     // serialize
@@ -500,32 +529,7 @@ pub fn render(tmpl: &impl Template, dest: impl io::Write) -> Result<(), RenderEr
             ..SerializeOpts::default()
         },
     );
-    document
-        .serialize(&mut serializer, TraversalScope::ChildrenOnly(None))
-        .map_err(RenderError::Serialize)?;
+    document.serialize(&mut serializer, TraversalScope::ChildrenOnly(None))?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use askama::Template;
-
-    #[test]
-    fn test_render_simple_invocation() {
-        #[derive(Template)]
-        #[template(ext = "html", source = "<EM>Test&{{index}}>!")]
-        struct TestTemplate {
-            index: u32,
-        }
-
-        let mut data = Vec::default();
-        super::render(&TestTemplate { index: 1 }, &mut data).expect("Rendered ok");
-        let data = std::str::from_utf8(&data).expect("Valid UTF-8");
-
-        assert_eq!(
-            data,
-            "<html><head></head><body><em>Test&amp;1&gt;!</em></body></html>"
-        );
-    }
 }

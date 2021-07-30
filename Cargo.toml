@@ -1,18 +1,10 @@
-[package]
-name = "askama-plus-html5ever"
-version = "0.1.0"
-description = "Parse Askama templates, and tidy them up using html5ever"
-authors = [ "The html5ever Project Developers", "René Kijewski <rene.SURNAME@fu-berlin.de>" ]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/Kijewski/askama-plus-html5ever"
-keywords = ["markup", "template", "jinja2", "html"]
-categories = [ "web-programming" ]
-edition = "2018"
+[workspace]
+members = [
+    "askama-plus-html5ever",
+    "html5ever-arena-dom",
+]
 
-[dependencies]
-anyhow = "1"
-askama = "0.10"
-html5ever = "0.25"
-tendril = "0.4"
-thiserror = "1"
-typed-arena = ">= 1, < 3"
+default-members = [
+    "askama-plus-html5ever",
+    "html5ever-arena-dom",
+]
