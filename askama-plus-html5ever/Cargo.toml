@@ -1,6 +1,6 @@
 [package]
 name = "askama-plus-html5ever"
-version = "0.2.0"
+version = "0.2.1"
 description = "Parse Askama templates, and tidy them up using html5ever"
 authors = ["The html5ever Project Developers", "René Kijewski <rene.SURNAME@fu-berlin.de>"]
 license = "MIT OR Apache-2.0"
@@ -10,5 +10,5 @@ categories = [ "web-programming" ]
 edition = "2018"
 
 [dependencies]
-askama = "0.10"
+askama = "0.11"
 html5ever-arena-dom = { version = "0.1", path = "../html5ever-arena-dom" }

@@ -1,6 +1,6 @@
 [package]
 name = "html5ever-arena-dom"
-version = "0.1.0"
+version = "0.1.1"
 description = "Parse templates, and tidy them up using html5ever"
 authors = ["The html5ever Project Developers", "René Kijewski <rene.SURNAME@fu-berlin.de>"]
 license = "MIT OR Apache-2.0"
@@ -10,6 +10,6 @@ categories = ["web-programming"]
 edition = "2018"
 
 [dependencies]
-html5ever = "0.25"
+html5ever = "0.26"
 tendril = "0.4"
 typed-arena = "2"
