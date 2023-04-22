@@ -10,7 +10,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Stream generated HTML data into [html5ever] to tidy it up while generating the data.
+//! A simple library to parse templates, and tidy them up using [html5ever](https://doc.servo.org/html5ever/index.html).
+//!
+//! This library simply extracts and combines two usage examples of html5ever, and makes them re-usable.
+//! It is mostly meant to be used with template engines such as [Askama](https://crates.io/crates/askama) or
+//! [nate](https://crates.io/crates/nate), which use fmt::Write to output their generated HTML data.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -504,7 +508,7 @@ impl<'arena> ArenaSinkParser<'arena> {
 /// Render a template into a writer, e.g. a [`Vec<u8>`].
 ///
 /// This is an oppinionated default implementation that disables [html5ever]'s script rendering.
-pub fn render(tmpl: &impl fmt::Display, dest: impl io::Write) -> Result<(), io::Error> {
+pub fn render<I: fmt::Display, O: io::Write>(tmpl: I, dest: O) -> Result<O, io::Error> {
     // render
     let arena = typed_arena::Arena::new();
     let mut parser = ArenaSinkParser::new(
@@ -531,5 +535,5 @@ pub fn render(tmpl: &impl fmt::Display, dest: impl io::Write) -> Result<(), io::
     );
     document.serialize(&mut serializer, TraversalScope::ChildrenOnly(None))?;
 
-    Ok(())
+    Ok(serializer.writer)
 }
