@@ -1,15 +1,71 @@
 [package]
 name = "html5ever-arena-dom"
-version = "0.1.2"
+version = "0.2.0"
 description = "Parse templates, and tidy them up using html5ever"
-authors = ["The html5ever Project Developers", "René Kijewski <rene.SURNAME@fu-berlin.de>"]
+authors = [
+    "The html5ever Project Developers",
+    "René Kijewski <crates.io@k6i.de>",
+]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kijewski/html5ever-arena-dom"
 keywords = ["markup", "template", "html"]
 categories = ["web-programming"]
-edition = "2018"
+edition = "2021"
+rust-version = "1.70.0"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--generate-link-to-definition", "--cfg=docsrs"]
 
 [dependencies]
-html5ever = "0.26"
-tendril = "0.4"
-typed-arena = "2"
+html5ever = "0.30.0"
+tendril = "0.4.0"
+typed-arena = "2.0"
+
+askama = { version = "0.13.0", default-features = false, optional = true, features = ["std"] }
+
+[target.'cfg(docsrs)'.dev-dependencies]
+askama = "0.13.0"
+
+[features]
+default = []
+askama = ["dep:askama"]
+
+[workspace]
+resolver = "2"
+members = ["."]
+
+[workspace.lints.rust]
+unknown_lints = { level = "allow", priority = -1 }
+
+absolute_paths_not_starting_with_crate = "warn"
+elided_lifetimes_in_paths = "warn"
+explicit_outlives_requirements = "warn"
+meta_variable_misuse = "warn"
+missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+non_ascii_idents = "warn"
+noop_method_call = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+unreachable_pub = "warn"
+unused_crate_dependencies = "warn"
+warnings = "warn"
+
+[workspace.lints.clippy]
+collapsible_match = "warn"
+expect_used = "warn"
+match_bool = "warn"
+match_ref_pats = "warn"
+match_same_arms = "warn"
+match_single_binding = "warn"
+needless_bool = "deny"
+needless_late_init = "warn"
+needless_match = "warn"
+redundant_guards = "warn"
+redundant_pattern = "warn"
+redundant_pattern_matching = "warn"
+single_match = "warn"
+single_match_else = "warn"
+unwrap_used = "warn"
