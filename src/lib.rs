@@ -1,4 +1,4 @@
-// Copyright 2021 René Kijewski and the html5ever Project Developers.
+// Copyright 2021-2025 René Kijewski and the html5ever Project Developers.
 // See the COPYRIGHT file at the top-level directory of this distribution.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
@@ -7,14 +7,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![forbid(unsafe_code)]
-#![deny(missing_docs)]
-
 //! A simple library to parse templates, and tidy them up using [html5ever](https://doc.servo.org/html5ever/index.html).
 //!
 //! This library simply extracts and combines two usage examples of html5ever, and makes them re-usable.
 //! It is mostly meant to be used with template engines such as [Askama](https://crates.io/crates/askama) or
 //! [nate](https://crates.io/crates/nate), which use fmt::Write to output their generated HTML data.
+
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
+#[cfg(feature = "askama")]
+mod askama;
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -22,15 +24,18 @@ use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::{fmt, io, ptr};
 
-use html5ever::driver::{parse_document, ParseOpts};
+use html5ever::driver::{ParseOpts, parse_document};
 use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::serialize::{HtmlSerializer, Serialize, SerializeOpts, Serializer, TraversalScope};
 use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::tree_builder::TreeBuilderOpts;
-use html5ever::{Attribute, ExpandedName, Parser, QualName};
+use html5ever::{Attribute, Parser, QualName};
+
+#[cfg(feature = "askama")]
+pub use crate::askama::{TidyTemplate, TidyTemplateExt};
 
 // Copied and adapted from
-// https://github.com/servo/html5ever/blob/cfea19f74d922ad049614cdb88a7805bc4ea7e06/html5ever/examples/arena.rs
+// https://github.com/servo/html5ever/blob/31a2c319c4b9fb763c88fbb7b826e66c3ff372a0/html5ever/examples/arena.rs
 // {
 
 // Copyright 2014-2017 The html5ever Project Developers. See the
@@ -42,21 +47,19 @@ use html5ever::{Attribute, ExpandedName, Parser, QualName};
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-/// Allocator for nodes in the HTML to render.
-pub type Arena<'arena> = &'arena typed_arena::Arena<Node<'arena>>;
-
-/// A (serializable) reference to a node in the HTML to render.
-pub type Ref<'arena> = &'arena Node<'arena>;
-
+type Arena<'arena> = &'arena typed_arena::Arena<Node<'arena>>;
+type Ref<'arena> = &'arena Node<'arena>;
 type Link<'arena> = Cell<Option<Ref<'arena>>>;
 
-/// An HTML document tree that uses a typed arena to store its nodes.
+/// Sink struct is responsible for handling how the data that comes out of the HTML parsing
+/// unit (TreeBuilder in our case) is handled.
 pub struct ArenaSink<'arena> {
     arena: Arena<'arena>,
     document: Ref<'arena>,
+    quirks_mode: Cell<QuirksMode>,
 }
 
-#[doc(hidden)]
+/// DOM node which contains links to other nodes in the tree.
 pub struct Node<'arena> {
     parent: Link<'arena>,
     next_sibling: Link<'arena>,
@@ -66,10 +69,14 @@ pub struct Node<'arena> {
     data: NodeData<'arena>,
 }
 
-enum NodeData<'arena> {
+/// HTML node data which can be an element, a comment, a string, a DOCTYPE, etc...
+#[doc(hidden)]
+pub enum NodeData<'arena> {
     Document,
     Doctype {
         name: StrTendril,
+        public_id: StrTendril,
+        system_id: StrTendril,
     },
     Text {
         contents: RefCell<StrTendril>,
@@ -182,45 +189,47 @@ impl<'arena> ArenaSink<'arena> {
 
         append(new_node)
     }
-
-    /// Construct a new [ArenaSink] that uses `arena` as its memory space.
-    #[inline]
-    pub fn new(arena: Arena<'arena>) -> Self {
-        Self {
-            arena,
-            document: arena.alloc(Node::new(NodeData::Document)),
-        }
-    }
 }
 
+/// By implementing the TreeSink trait we determine how the data from the tree building step
+/// is processed. In our case, our data is allocated in the arena and added to the Node data
+/// structure.
+///
+/// For deeper understating of each function go to the TreeSink declaration.
 impl<'arena> TreeSink for ArenaSink<'arena> {
     type Handle = Ref<'arena>;
     type Output = Ref<'arena>;
+    type ElemName<'a>
+        = &'a QualName
+    where
+        Self: 'a;
 
     fn finish(self) -> Ref<'arena> {
         self.document
     }
 
-    fn parse_error(&mut self, _: Cow<'static, str>) {}
+    fn parse_error(&self, _: Cow<'static, str>) {}
 
-    fn get_document(&mut self) -> Ref<'arena> {
+    fn get_document(&self) -> Ref<'arena> {
         self.document
     }
 
-    fn set_quirks_mode(&mut self, _mode: QuirksMode) {}
+    fn set_quirks_mode(&self, mode: QuirksMode) {
+        self.quirks_mode.set(mode);
+    }
 
     fn same_node(&self, x: &Ref<'arena>, y: &Ref<'arena>) -> bool {
         ptr::eq::<Node>(*x, *y)
     }
 
-    fn elem_name<'a>(&self, target: &'a Ref<'arena>) -> ExpandedName<'a> {
+    fn elem_name(&self, target: &Ref<'arena>) -> Self::ElemName<'_> {
         match target.data {
-            NodeData::Element { ref name, .. } => name.expanded(),
+            NodeData::Element { ref name, .. } => name,
             _ => panic!("not an element!"),
         }
     }
 
-    fn get_template_contents(&mut self, target: &Ref<'arena>) -> Ref<'arena> {
+    fn get_template_contents(&self, target: &Ref<'arena>) -> Ref<'arena> {
         if let NodeData::Element {
             template_contents: Some(contents),
             ..
@@ -245,7 +254,7 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
     }
 
     fn create_element(
-        &mut self,
+        &self,
         name: QualName,
         attrs: Vec<Attribute>,
         flags: ElementFlags,
@@ -262,18 +271,18 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
         })
     }
 
-    fn create_comment(&mut self, text: StrTendril) -> Ref<'arena> {
+    fn create_comment(&self, text: StrTendril) -> Ref<'arena> {
         self.new_node(NodeData::Comment { contents: text })
     }
 
-    fn create_pi(&mut self, target: StrTendril, data: StrTendril) -> Ref<'arena> {
+    fn create_pi(&self, target: StrTendril, data: StrTendril) -> Ref<'arena> {
         self.new_node(NodeData::ProcessingInstruction {
             target,
             contents: data,
         })
     }
 
-    fn append(&mut self, parent: &Ref<'arena>, child: NodeOrText<Ref<'arena>>) {
+    fn append(&self, parent: &Ref<'arena>, child: NodeOrText<Ref<'arena>>) {
         self.append_common(
             child,
             || parent.last_child.get(),
@@ -281,7 +290,7 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
         )
     }
 
-    fn append_before_sibling(&mut self, sibling: &Ref<'arena>, child: NodeOrText<Ref<'arena>>) {
+    fn append_before_sibling(&self, sibling: &Ref<'arena>, child: NodeOrText<Ref<'arena>>) {
         self.append_common(
             child,
             || sibling.previous_sibling.get(),
@@ -290,7 +299,7 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
     }
 
     fn append_based_on_parent_node(
-        &mut self,
+        &self,
         element: &Ref<'arena>,
         prev_element: &Ref<'arena>,
         child: NodeOrText<Ref<'arena>>,
@@ -303,16 +312,19 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
     }
 
     fn append_doctype_to_document(
-        &mut self,
+        &self,
         name: StrTendril,
-        _public_id: StrTendril,
-        _system_id: StrTendril,
+        public_id: StrTendril,
+        system_id: StrTendril,
     ) {
-        self.document
-            .append(self.new_node(NodeData::Doctype { name }))
+        self.document.append(self.new_node(NodeData::Doctype {
+            name,
+            public_id,
+            system_id,
+        }))
     }
 
-    fn add_attrs_if_missing(&mut self, target: &Ref<'arena>, attrs: Vec<Attribute>) {
+    fn add_attrs_if_missing(&self, target: &Ref<'arena>, attrs: Vec<Attribute>) {
         let mut existing = if let NodeData::Element { ref attrs, .. } = target.data {
             attrs.borrow_mut()
         } else {
@@ -330,11 +342,11 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
         );
     }
 
-    fn remove_from_parent(&mut self, target: &Ref<'arena>) {
+    fn remove_from_parent(&self, target: &Ref<'arena>) {
         target.detach()
     }
 
-    fn reparent_children(&mut self, node: &Ref<'arena>, new_parent: &Ref<'arena>) {
+    fn reparent_children(&self, node: &Ref<'arena>, new_parent: &Ref<'arena>) {
         let mut next_child = node.first_child.get();
         while let Some(child) = next_child {
             debug_assert!(ptr::eq::<Node>(child.parent.get().unwrap(), *node));
@@ -366,7 +378,7 @@ enum SerializeOp<'arena> {
     Close(QualName),
 }
 
-impl<'arena> Serialize for Ref<'arena> {
+impl Serialize for Ref<'_> {
     fn serialize<S>(&self, serializer: &mut S, traversal_scope: TraversalScope) -> io::Result<()>
     where
         S: Serializer,
@@ -420,7 +432,7 @@ impl<'arena> Serialize for Ref<'arena> {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
                             "Can't serialize Document node itself",
-                        ))
+                        ));
                     }
                 },
 
@@ -436,8 +448,7 @@ impl<'arena> Serialize for Ref<'arena> {
 
 // }
 
-/// A wrapper for [`Parser<ArenaSink<'_>>`](Parser) that implements [fmt::Write](fmt::Write)
-/// and [io::Write](io::Write).
+/// A wrapper for [`Parser<ArenaSink<'_>>`](Parser) that implements [fmt::Write] and [io::Write].
 pub struct ArenaSinkParser<'arena>(Parser<ArenaSink<'arena>>);
 
 impl fmt::Write for ArenaSinkParser<'_> {
@@ -457,7 +468,7 @@ impl fmt::Write for ArenaIoAdaptor<'_, '_> {
     }
 }
 
-impl<'arena> io::Write for ArenaSinkParser<'arena> {
+impl io::Write for ArenaSinkParser<'_> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.write_all(buf)?;
@@ -495,7 +506,12 @@ impl<'arena> ArenaSinkParser<'arena> {
     /// * `opts` - Options to pass to `parse_document()`.
     #[inline]
     pub fn new(arena: Arena<'arena>, opts: ParseOpts) -> Self {
-        Self(parse_document(ArenaSink::new(arena), opts))
+        let sink = ArenaSink {
+            arena,
+            document: arena.alloc(Node::new(NodeData::Document)),
+            quirks_mode: Cell::new(QuirksMode::NoQuirks),
+        };
+        Self(parse_document(sink, opts))
     }
 
     /// Finish rendering and return the document node.
@@ -505,35 +521,96 @@ impl<'arena> ArenaSinkParser<'arena> {
     }
 }
 
+/// Tidy up an input string.
+///
+/// This is an oppinionated default implementation that disables [html5ever]'s script rendering.
+///
+/// ```
+/// # use html5ever_arena_dom::tidy;
+/// assert_eq!(
+///     tidy("<title>Test</title><h1>Hello, <b>wörld</strong>!</h2").unwrap(),
+///     "<html><head><title>Test</title></head>\
+///      <body><h1>Hello, <b>wörld!</b></h1></body></html>"
+/// )
+/// ```
+#[inline]
+pub fn tidy<I: fmt::Display>(input: I) -> io::Result<String> {
+    render(input, String::new())
+}
+
 /// Render a template into a writer, e.g. a [`Vec<u8>`].
 ///
 /// This is an oppinionated default implementation that disables [html5ever]'s script rendering.
-pub fn render<I: fmt::Display, O: io::Write>(tmpl: I, dest: O) -> Result<O, io::Error> {
-    // render
+///
+/// ```
+/// # use html5ever_arena_dom::render;
+/// let dest = render(
+///     "<title>Test</title><h1>Hello, <b>wörld</strong>!</h2",
+///     String::new()
+/// ).unwrap();
+/// assert_eq!(
+///     dest,
+///     "<html><head><title>Test</title></head>\
+///      <body><h1>Hello, <b>wörld!</b></h1></body></html>"
+/// )
+/// ```
+pub fn render<I: fmt::Display, O: fmt::Write>(tmpl: I, dest: O) -> io::Result<O> {
     let arena = typed_arena::Arena::new();
-    let mut parser = ArenaSinkParser::new(
-        &arena,
-        ParseOpts {
-            tree_builder: TreeBuilderOpts {
-                scripting_enabled: false,
-                ..TreeBuilderOpts::default()
-            },
-            ..ParseOpts::default()
-        },
-    );
-    write!(parser, "{}", tmpl)?;
-    let document = parser.finish();
+    let mut parser = ArenaSinkParser::new(&arena, default_parse_opts());
+    write!(parser, "{tmpl}")?;
+    serialize(dest, parser.finish())
+}
 
-    // serialize
-    let mut serializer = HtmlSerializer::new(
+fn serialize<O: fmt::Write>(dest: O, document: Ref<'_>) -> io::Result<O> {
+    struct IoFmtWriter<W: fmt::Write>(W);
+
+    impl<W: fmt::Write> io::Write for IoFmtWriter<W> {
+        #[inline]
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_all(buf)?;
+            Ok(buf.len())
+        }
+
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+            debug_assert!(std::str::from_utf8(buf).is_ok());
+
+            // SAFETY: we know that [`html5ever`] only writes valid UTF-8 data
+            let s = unsafe { std::str::from_utf8_unchecked(buf) };
+            self.0
+                .write_str(s)
+                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+            Ok(())
+        }
+
+        #[inline]
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut serializer = default_html_serializer(IoFmtWriter(dest));
+    document.serialize(&mut serializer, TraversalScope::ChildrenOnly(None))?;
+    Ok(serializer.writer.0)
+}
+
+fn default_parse_opts() -> ParseOpts {
+    ParseOpts {
+        tree_builder: TreeBuilderOpts {
+            scripting_enabled: false,
+            ..TreeBuilderOpts::default()
+        },
+        ..ParseOpts::default()
+    }
+}
+
+fn default_html_serializer<W: io::Write>(dest: W) -> HtmlSerializer<W> {
+    HtmlSerializer::new(
         dest,
         SerializeOpts {
             scripting_enabled: false,
             create_missing_parent: true,
             ..SerializeOpts::default()
         },
-    );
-    document.serialize(&mut serializer, TraversalScope::ChildrenOnly(None))?;
-
-    Ok(serializer.writer)
+    )
 }
