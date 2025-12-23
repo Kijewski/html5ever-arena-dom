@@ -22,10 +22,10 @@ html5ever = "0.30.0"
 tendril = "0.4.0"
 typed-arena = "2.0"
 
-askama = { version = "0.13.0", default-features = false, optional = true, features = ["std"] }
+askama = { version = "0.15.0", default-features = false, optional = true, features = ["std"] }
 
 [target.'cfg(docsrs)'.dev-dependencies]
-askama = "0.13.0"
+askama = "0.15.0"
 
 [features]
 default = []
