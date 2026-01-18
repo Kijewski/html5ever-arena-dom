@@ -1,6 +1,6 @@
 [package]
 name = "html5ever-arena-dom"
-version = "0.2.0"
+version = "0.3.0"
 description = "Parse templates, and tidy them up using html5ever"
 authors = [
     "The html5ever Project Developers",
@@ -10,26 +10,20 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kijewski/html5ever-arena-dom"
 keywords = ["markup", "template", "html"]
 categories = ["web-programming"]
-edition = "2021"
-rust-version = "1.70.0"
+edition = "2024"
+rust-version = "1.85.0"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--generate-link-to-definition", "--cfg=docsrs"]
+rustdoc-args = ["--generate-link-to-definition"]
 
 [dependencies]
-html5ever = "0.30.0"
-tendril = "0.4.0"
-typed-arena = "2.0"
-
-askama = { version = "0.13.0", default-features = false, optional = true, features = ["std"] }
-
-[target.'cfg(docsrs)'.dev-dependencies]
-askama = "0.13.0"
+html5ever = "0.37.0"
+tendril = "0.5.0"
+typed-arena = "2.0.0"
 
 [features]
 default = []
-askama = ["dep:askama"]
 
 [workspace]
 resolver = "2"
