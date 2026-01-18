@@ -1,4 +1,4 @@
-// Copyright 2021-2025 René Kijewski and the html5ever Project Developers.
+// Copyright 2021-2026 René Kijewski and the html5ever Project Developers.
 // See the COPYRIGHT file at the top-level directory of this distribution.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
@@ -10,13 +10,8 @@
 //! A simple library to parse templates, and tidy them up using [html5ever](https://doc.servo.org/html5ever/index.html).
 //!
 //! This library simply extracts and combines two usage examples of html5ever, and makes them re-usable.
-//! It is mostly meant to be used with template engines such as [Askama](https://crates.io/crates/askama) or
-//! [nate](https://crates.io/crates/nate), which use fmt::Write to output their generated HTML data.
-
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-
-#[cfg(feature = "askama")]
-mod askama;
+//! It is mostly meant to be used with template engines, such as [Askama](https://crates.io/crates/askama),
+//! which use fmt::Write to output their generated HTML data.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -30,9 +25,6 @@ use html5ever::serialize::{HtmlSerializer, Serialize, SerializeOpts, Serializer,
 use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::tree_builder::TreeBuilderOpts;
 use html5ever::{Attribute, Parser, QualName};
-
-#[cfg(feature = "askama")]
-pub use crate::askama::{TidyTemplate, TidyTemplateExt};
 
 // Copied and adapted from
 // https://github.com/servo/html5ever/blob/31a2c319c4b9fb763c88fbb7b826e66c3ff372a0/html5ever/examples/arena.rs
@@ -60,6 +52,7 @@ pub struct ArenaSink<'arena> {
 }
 
 /// DOM node which contains links to other nodes in the tree.
+#[derive(Debug)]
 pub struct Node<'arena> {
     parent: Link<'arena>,
     next_sibling: Link<'arena>,
@@ -71,6 +64,7 @@ pub struct Node<'arena> {
 
 /// HTML node data which can be an element, a comment, a string, a DOCTYPE, etc...
 #[doc(hidden)]
+#[derive(Debug, Clone)]
 pub enum NodeData<'arena> {
     Document,
     Doctype {
@@ -354,6 +348,21 @@ impl<'arena> TreeSink for ArenaSink<'arena> {
             new_parent.append(child)
         }
     }
+
+    fn clone_subtree(&self, node: &Self::Handle) -> Self::Handle {
+        // Allocate the new node in the arena using Clone
+        let cloned_node = self.arena.alloc(Node::new(node.data.clone()));
+
+        // Clone all children and append them
+        let mut child = node.first_child.get();
+        while let Some(current_child) = child {
+            let cloned_child = self.clone_subtree(&current_child);
+            cloned_node.append(cloned_child);
+            child = current_child.next_sibling.get();
+        }
+
+        cloned_node
+    }
 }
 
 // }
@@ -429,10 +438,7 @@ impl Serialize for Ref<'_> {
                     } => serializer.write_processing_instruction(target, contents)?,
 
                     NodeData::Document => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "Can't serialize Document node itself",
-                        ));
+                        return Err(io::Error::other("Can't serialize Document node itself"));
                     }
                 },
 
@@ -482,8 +488,7 @@ impl io::Write for ArenaSinkParser<'_> {
 
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        let s =
-            std::str::from_utf8(buf).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+        let s = std::str::from_utf8(buf).map_err(io::Error::other)?;
         self.0.process(s.into());
         Ok(())
     }
@@ -492,7 +497,7 @@ impl io::Write for ArenaSinkParser<'_> {
     fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
         match fmt::write(&mut ArenaIoAdaptor(self), fmt) {
             Ok(()) => Ok(()),
-            Err(..) => Err(io::Error::new(io::ErrorKind::Other, "formatter error")),
+            Err(..) => Err(io::Error::other("formatter error")),
         }
     }
 }
@@ -523,7 +528,7 @@ impl<'arena> ArenaSinkParser<'arena> {
 
 /// Tidy up an input string.
 ///
-/// This is an oppinionated default implementation that disables [html5ever]'s script rendering.
+/// This is an opinionated default implementation that disables [html5ever]'s script rendering.
 ///
 /// ```
 /// # use html5ever_arena_dom::tidy;
@@ -540,7 +545,7 @@ pub fn tidy<I: fmt::Display>(input: I) -> io::Result<String> {
 
 /// Render a template into a writer, e.g. a [`Vec<u8>`].
 ///
-/// This is an oppinionated default implementation that disables [html5ever]'s script rendering.
+/// This is an opinionated default implementation that disables [html5ever]'s script rendering.
 ///
 /// ```
 /// # use html5ever_arena_dom::render;
@@ -577,9 +582,7 @@ fn serialize<O: fmt::Write>(dest: O, document: Ref<'_>) -> io::Result<O> {
 
             // SAFETY: we know that [`html5ever`] only writes valid UTF-8 data
             let s = unsafe { std::str::from_utf8_unchecked(buf) };
-            self.0
-                .write_str(s)
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+            self.0.write_str(s).map_err(io::Error::other)?;
             Ok(())
         }
 
