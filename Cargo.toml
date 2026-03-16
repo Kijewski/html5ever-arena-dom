@@ -18,7 +18,7 @@ all-features = true
 rustdoc-args = ["--generate-link-to-definition"]
 
 [dependencies]
-html5ever = "0.37.0"
+html5ever = "0.39.0"
 tendril = "0.5.0"
 typed-arena = "2.0.0"
 
